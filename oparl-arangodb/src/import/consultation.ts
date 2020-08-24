@@ -1,34 +1,57 @@
 import { Consultation, ExternalList } from "oparl-sdk/dist/types";
-import { CONSULTATION_COLLECTION } from "../utils/collections";
+import {
+  CONSULTATION_EDGE_COLLECTION,
+  AGENA_ITEM_COLLECTION,
+  PAPER_COLLECTION,
+} from "../utils/collections";
 import { db } from "../db";
 import { oparlIdToArangoKey } from "../utils/oparlIdToArangoKey";
 import { oparl } from "./oparl";
 import { mapSeries } from "p-iteration";
 
+// const consultationsCollection = db.collection(CONSULTATION_COLLECTION);
+const consultationsCollection = db.edgeCollection(CONSULTATION_EDGE_COLLECTION);
+
 export const importConsultation = async (consultation: Consultation) => {
   process.stdout.write("C");
-  let consultationsCollection = db.collection(CONSULTATION_COLLECTION);
 
   const consultationKey = oparlIdToArangoKey(consultation.id);
 
-  const { organization: organizations, ...consultationRest } = consultation;
+  const {
+    organization: organizations,
+    agendaItem,
+    paper,
+    ...consultationRest
+  } = consultation;
 
-  return await consultationsCollection
-    .save(
-      {
-        ...consultationRest,
-        organizations,
-        _key: consultationKey,
-      },
-      {
-        overwrite: true,
-      }
-    )
-    .then(() => consultation.id)
-    .catch((e) => {
-      console.log("\nERROR Consultation->save ", consultation);
-      return `ERROR: ${consultation.id}`;
-    });
+  if (agendaItem && paper) {
+    const agendaItemKey = oparlIdToArangoKey(agendaItem);
+    const paperKey = oparlIdToArangoKey(agendaItem);
+    const ageendaItemId = `${AGENA_ITEM_COLLECTION}/${agendaItemKey}`;
+    const paperId = `${PAPER_COLLECTION}/${paperKey}`;
+
+    return await consultationsCollection
+      .save(
+        {
+          ...consultationRest,
+          _from: ageendaItemId,
+          _to: paperId,
+          organizations,
+          _key: consultationKey,
+        },
+        {
+          overwrite: true,
+        }
+      )
+      .then(() => consultation.id)
+      .catch((e) => {
+        console.log("\nERROR Consultation->save ", consultation);
+        return `ERROR: ${consultation.id}`;
+      });
+  } else {
+    console.log(`missing relations for ${consultation.id}`);
+    return consultation.id;
+  }
 };
 
 export const importConsultationEl = async (

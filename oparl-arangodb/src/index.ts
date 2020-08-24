@@ -1,11 +1,12 @@
 import { importSystems } from "./import";
-import { ensureCollections } from "./utils/collections";
+import { ensureCollections, ensureEdges } from "./utils/collections";
 
 (async () => {
   const start = new Date();
+
   // ensure collections are existing
   await ensureCollections();
-  //   await ensureEdges();
+  await ensureEdges();
 
   await importSystems();
   console.log("### DONE ###");
