@@ -1,16 +1,13 @@
 import { Consultation, ExternalList } from "oparl-sdk/dist/types";
-import {
-  CONSULTATION_EDGE_COLLECTION,
-  AGENA_ITEM_COLLECTION,
-  PAPER_COLLECTION,
-} from "../utils/collections";
+import { CONSULTATION_COLLECTION } from "../utils/collections";
 import { db } from "../db";
 import { oparlIdToArangoKey } from "../utils/oparlIdToArangoKey";
 import { oparl } from "./oparl";
-import { mapSeries } from "p-iteration";
+import { map } from "p-iteration";
+import { importKeyword } from "./keyword";
+import { savePaperRelation } from "../utils/savePaperRelation";
 
-// const consultationsCollection = db.collection(CONSULTATION_COLLECTION);
-const consultationsCollection = db.edgeCollection(CONSULTATION_EDGE_COLLECTION);
+const consultationsCollection = db.collection(CONSULTATION_COLLECTION);
 
 export const importConsultation = async (consultation: Consultation) => {
   process.stdout.write("C");
@@ -18,55 +15,61 @@ export const importConsultation = async (consultation: Consultation) => {
   const consultationKey = oparlIdToArangoKey(consultation.id);
 
   const {
+    keyword,
     organization: organizations,
-    agendaItem,
     paper,
     ...consultationRest
   } = consultation;
 
-  if (agendaItem && paper) {
-    const agendaItemKey = oparlIdToArangoKey(agendaItem);
-    const paperKey = oparlIdToArangoKey(agendaItem);
-    const ageendaItemId = `${AGENA_ITEM_COLLECTION}/${agendaItemKey}`;
-    const paperId = `${PAPER_COLLECTION}/${paperKey}`;
-
-    return await consultationsCollection
-      .save(
-        {
-          ...consultationRest,
-          _from: ageendaItemId,
-          _to: paperId,
-          organizations,
-          _key: consultationKey,
-        },
-        {
-          overwrite: true,
-        }
-      )
-      .then(() => consultation.id)
-      .catch((e) => {
-        console.log("\nERROR Consultation->save ", consultation);
-        return `ERROR: ${consultation.id}`;
-      });
-  } else {
-    console.log(`missing relations for ${consultation.id}`);
-    return consultation.id;
+  // Keyword edge
+  if (keyword) {
+    await map(keyword, (k) =>
+      importKeyword({
+        keyword: k,
+        fromId: `${CONSULTATION_COLLECTION}/${consultationKey}`,
+      }).catch((e) => console.log("\nERROR Consultation->keyword ", e, keyword))
+    );
   }
+
+  // Paper edge
+  if (paper) {
+    await savePaperRelation({
+      fromId: `${CONSULTATION_COLLECTION}/${consultationKey}`,
+      toKey: oparlIdToArangoKey(paper),
+    }).catch((e) => console.log("\nERROR Consultation->paper ", e, paper));
+  }
+
+  return await consultationsCollection
+    .save(
+      {
+        ...consultationRest,
+        organizations,
+        _key: consultationKey,
+      },
+      {
+        overwrite: true,
+      }
+    )
+    .then(() => consultation.id)
+    .catch((e) => {
+      console.log("\nERROR Consultation->save ", consultation);
+      return `ERROR: ${consultation.id}`;
+    });
 };
 
 export const importConsultationEl = async (
   consultationEl: string
-): Promise<String[]> => {
+): Promise<string[]> => {
   let consultationsList = await oparl.getData<ExternalList<Consultation>>(
     consultationEl
   );
   let hasNext = true;
   let consultationIds: string[] = [];
   do {
-    const consultations = await mapSeries(
+    const consultations = await map(
       consultationsList.data,
       async (consultation) => {
-        return await importConsultation(consultation);
+        return importConsultation(consultation);
       }
     );
     consultationIds = [...consultationIds, ...consultations];

@@ -3,7 +3,8 @@ import { LEGISLATIVE_TERM_COLLECTION } from "../utils/collections";
 import { db } from "../db";
 import { oparlIdToArangoKey } from "../utils/oparlIdToArangoKey";
 import { oparl } from "./oparl";
-import { mapSeries } from "p-iteration";
+import { map } from "p-iteration";
+import { importKeyword } from "./keyword";
 
 export const importLegislativeTerm = async (
   legislativeTerm: LegislativeTerm
@@ -13,7 +14,17 @@ export const importLegislativeTerm = async (
 
   const legislativeTermKey = oparlIdToArangoKey(legislativeTerm.id);
 
-  const { ...legislativeTermRest } = legislativeTerm;
+  const { keyword, ...legislativeTermRest } = legislativeTerm;
+
+  // Keyword edge
+  if (keyword) {
+    await map(keyword, (k) =>
+      importKeyword({
+        keyword: k,
+        fromId: `${LEGISLATIVE_TERM_COLLECTION}/${legislativeTermKey}`,
+      })
+    );
+  }
 
   return legislativeTermsCollection
     .save(
@@ -30,17 +41,17 @@ export const importLegislativeTerm = async (
 
 export const importLegislativeTermEl = async (
   legislativeTermEl: string
-): Promise<String[]> => {
+): Promise<string[]> => {
   let legislativeTermsList = await oparl.getData<ExternalList<LegislativeTerm>>(
     legislativeTermEl
   );
   let hasNext = true;
   let legislativeTermIds: string[] = [];
   do {
-    const legislativeTerms = await mapSeries(
+    const legislativeTerms = await map(
       legislativeTermsList.data,
       async (legislativeTerm) => {
-        return await importLegislativeTerm(legislativeTerm);
+        return importLegislativeTerm(legislativeTerm);
       }
     );
     legislativeTermIds = [...legislativeTermIds, ...legislativeTerms];

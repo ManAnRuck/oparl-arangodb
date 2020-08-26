@@ -3,9 +3,10 @@ import { db } from "../db";
 import { oparlIdToArangoKey } from "../utils/oparlIdToArangoKey";
 import { PERSON_COLLECTION } from "../utils/collections";
 import { ExternalList, Person } from "oparl-sdk/dist/types";
-import { mapSeries, map } from "p-iteration";
+import { map } from "p-iteration";
 import { importMembership } from "./membership";
 import { importLocation } from "./location";
+import { importKeyword } from "./keyword";
 
 export const importPerson = async (person: Person) => {
   process.stdout.write("Per");
@@ -17,6 +18,7 @@ export const importPerson = async (person: Person) => {
     membership,
     location: locationId,
     locationObject,
+    keyword,
     ...personRest
   } = person;
 
@@ -24,6 +26,13 @@ export const importPerson = async (person: Person) => {
   const location = locationObject
     ? await importLocation(locationObject)
     : locationId;
+
+  // Keyword edge
+  if (keyword) {
+    await map(keyword, (k) =>
+      importKeyword({ keyword: k, fromId: `${PERSON_COLLECTION}/${personKey}` })
+    );
+  }
 
   return personsCollection
     .save(
@@ -40,13 +49,13 @@ export const importPerson = async (person: Person) => {
     .then(() => person.id);
 };
 
-export const importPersonEl = async (personEl: string): Promise<String[]> => {
+export const importPersonEl = async (personEl: string): Promise<string[]> => {
   let personsList = await oparl.getData<ExternalList<Person>>(personEl);
   let hasNext = true;
   let personIds: string[] = [];
   do {
-    const persons = await mapSeries(personsList.data, async (person) => {
-      return await importPerson(person);
+    const persons = await map(personsList.data, async (person) => {
+      return importPerson(person);
     });
     personIds = [...personIds, ...persons];
     if (personsList?.next) {

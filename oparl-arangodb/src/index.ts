@@ -9,7 +9,7 @@ import { ensureCollections, ensureEdges } from "./utils/collections";
   await ensureEdges();
 
   await importSystems();
-  console.log("### DONE ###");
+  console.log("\n### DONE ###");
   console.log("### DONE ###");
   console.log("### DONE ###");
   const end = (new Date() as any) - (start as any);

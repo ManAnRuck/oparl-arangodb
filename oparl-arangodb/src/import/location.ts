@@ -3,7 +3,8 @@ import { LOCATION_COLLECTION } from "../utils/collections";
 import { db } from "../db";
 import { oparlIdToArangoKey } from "../utils/oparlIdToArangoKey";
 import { oparl } from "./oparl";
-import { mapSeries } from "p-iteration";
+import { map } from "p-iteration";
+import { importKeyword } from "./keyword";
 
 export const importLocation = async (location: Location) => {
   process.stdout.write("Loc");
@@ -11,7 +12,17 @@ export const importLocation = async (location: Location) => {
 
   const locationKey = oparlIdToArangoKey(location.id);
 
-  const { ...locationRest } = location;
+  const { keyword, ...locationRest } = location;
+
+  // Keyword edge
+  if (keyword) {
+    await map(keyword, (k) =>
+      importKeyword({
+        keyword: k,
+        fromId: `${LOCATION_COLLECTION}/${locationKey}`,
+      })
+    );
+  }
 
   return locationsCollection
     .save(
@@ -28,13 +39,13 @@ export const importLocation = async (location: Location) => {
 
 export const importLocationEl = async (
   locationEl: string
-): Promise<String[]> => {
+): Promise<string[]> => {
   let locationsList = await oparl.getData<ExternalList<Location>>(locationEl);
   let hasNext = true;
   let locationIds: string[] = [];
   do {
-    const locations = await mapSeries(locationsList.data, async (location) => {
-      return await importLocation(location);
+    const locations = await map(locationsList.data, async (location) => {
+      return importLocation(location);
     });
     locationIds = [...locationIds, ...locations];
     if (locationsList?.next) {

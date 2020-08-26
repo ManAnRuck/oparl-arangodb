@@ -1,12 +1,15 @@
 import { oparl } from "./oparl";
 import { db } from "../db";
 import { oparlIdToArangoKey } from "../utils/oparlIdToArangoKey";
-import { ORGANISATION_COLLECTION } from "../utils/collections";
+import { ORGANISATION_COLLECTION, BODY_COLLECTION } from "../utils/collections";
 import { ExternalList, Organization } from "oparl-sdk/dist/types";
-import { mapSeries } from "p-iteration";
+import { map } from "p-iteration";
 import { importMeetingEl } from "./meetings";
 import { importConsultationEl } from "./consultation";
 import { importLocation } from "./location";
+import { importKeyword } from "./keyword";
+import { saveMeetingRelation } from "../utils/saveMeetingRelation";
+import { saveOrganisationRelation } from "../utils/saveOrganisationRelation";
 
 export const importOrganization = async (organization: Organization) => {
   process.stdout.write("O");
@@ -19,6 +22,7 @@ export const importOrganization = async (organization: Organization) => {
     membership,
     consultation,
     location: locationObj,
+    keyword,
     ...organizationRest
   } = organization;
 
@@ -29,7 +33,27 @@ export const importOrganization = async (organization: Organization) => {
     : [];
   const location = locationObj ? await importLocation(locationObj) : undefined;
 
-  return organizationsCollection
+  // Keyword edge
+  if (keyword) {
+    await map(keyword, (k) =>
+      importKeyword({
+        keyword: k,
+        fromId: `${ORGANISATION_COLLECTION}/${organizationKey}`,
+      })
+    );
+  }
+
+  // Meetings edge
+  if (meetings) {
+    await map(meetings, (id) =>
+      saveMeetingRelation({
+        toKey: oparlIdToArangoKey(id),
+        fromId: `${ORGANISATION_COLLECTION}/${organizationKey}`,
+      })
+    );
+  }
+
+  const result = await organizationsCollection
     .save(
       {
         ...organizationRest,
@@ -44,21 +68,30 @@ export const importOrganization = async (organization: Organization) => {
       }
     )
     .then(() => organization.id);
+
+  if (body) {
+    await saveOrganisationRelation({
+      fromId: `${BODY_COLLECTION}/${oparlIdToArangoKey(body)}`,
+      toKey: `${organizationKey}`,
+    });
+  }
+
+  return result;
 };
 
 export const importOrganizationEl = async (
   organizationEl: string
-): Promise<String[]> => {
+): Promise<string[]> => {
   let organizationsList = await oparl.getData<ExternalList<Organization>>(
     organizationEl
   );
   let hasNext = true;
   let organizationIds: string[] = [];
   do {
-    const organizations = await mapSeries(
+    const organizations = await map(
       organizationsList.data,
       async (organization) => {
-        return await importOrganization(organization);
+        return importOrganization(organization);
       }
     );
     organizationIds = [...organizationIds, ...organizations];

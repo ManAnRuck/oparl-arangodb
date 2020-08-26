@@ -3,7 +3,9 @@ import { FILE_COLLECTION } from "../utils/collections";
 import { db } from "../db";
 import { oparlIdToArangoKey } from "../utils/oparlIdToArangoKey";
 import { oparl } from "./oparl";
-import { mapSeries } from "p-iteration";
+import { map } from "p-iteration";
+import { saveFileRelation } from "../utils/saveFileRelation";
+import { importKeyword } from "./keyword";
 
 export const importFile = async (file: File) => {
   process.stdout.write("F");
@@ -16,14 +18,41 @@ export const importFile = async (file: File) => {
     meeting: meetings,
     agendaItem: agendaItems,
     paper: papers,
+    masterFile,
+    derivativeFile,
+    keyword,
     ...fileRest
   } = file;
+
+  // file edges
+  if (masterFile) {
+    await saveFileRelation({
+      fromId: `${FILE_COLLECTION}/${fileKey}`,
+      toKey: oparlIdToArangoKey(masterFile),
+      type: "masterFile",
+    });
+  }
+  if (derivativeFile) {
+    await map(derivativeFile, (rel) => {
+      return saveFileRelation({
+        fromId: `${FILE_COLLECTION}/${fileKey}`,
+        toKey: oparlIdToArangoKey(rel),
+        type: "derivativeFile",
+      });
+    });
+  }
+
+  // Keyword edge
+  if (keyword) {
+    await map(keyword, (k) =>
+      importKeyword({ keyword: k, fromId: `${FILE_COLLECTION}/${fileKey}` })
+    );
+  }
 
   return filesCollection
     .save(
       {
         ...fileRest,
-        derivativeFiles,
         meetings,
         agendaItems,
         papers,
@@ -36,13 +65,13 @@ export const importFile = async (file: File) => {
     .then(() => file.id);
 };
 
-export const importFileEl = async (fileEl: string): Promise<String[]> => {
+export const importFileEl = async (fileEl: string): Promise<string[]> => {
   let filesList = await oparl.getData<ExternalList<File>>(fileEl);
   let hasNext = true;
   let fileIds: string[] = [];
   do {
-    const files = await mapSeries(filesList.data, async (file) => {
-      return await importFile(file);
+    const files = await map(filesList.data, async (file) => {
+      return importFile(file);
     });
     fileIds = [...fileIds, ...files];
     if (filesList?.next) {

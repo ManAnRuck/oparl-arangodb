@@ -9,10 +9,10 @@ export const oparlConfig: any = {
       return retryCount * 1000;
     },
   },
-  // limit: {
-  //   maxRequests: 5,
-  //   perMilliseconds: 1000,
-  // },
+  limit: {
+    maxRequests: 10,
+    perMilliseconds: 1000,
+  },
 };
 
 export const oparl = new Oparl({
