@@ -7,9 +7,13 @@ import { map } from "p-iteration";
 import { importMembership } from "./membership";
 import { importLocation } from "./location";
 import { importKeyword } from "./keyword";
+import { alreadyImported } from "../utils/alreadyImported";
 
 export const importPerson = async (person: Person) => {
-  process.stdout.write("Per");
+  process.stdout.write("Pe");
+  if (alreadyImported(person.id)) {
+    return person.id;
+  }
   let personsCollection = db.collection(PERSON_COLLECTION);
 
   const personKey = oparlIdToArangoKey(person.id);
@@ -22,14 +26,12 @@ export const importPerson = async (person: Person) => {
     ...personRest
   } = person;
 
-  const memberships = membership ? await map(membership, importMembership) : [];
-  const location = locationObject
-    ? await importLocation(locationObject)
-    : locationId;
+  membership ? map(membership, importMembership) : [];
+  locationObject ? importLocation(locationObject) : locationId;
 
   // Keyword edge
   if (keyword) {
-    await map(keyword, (k) =>
+    map(keyword, (k) =>
       importKeyword({ keyword: k, fromId: `${PERSON_COLLECTION}/${personKey}` })
     );
   }
@@ -38,8 +40,6 @@ export const importPerson = async (person: Person) => {
     .save(
       {
         ...personRest,
-        memberships,
-        location,
         _key: personKey,
       },
       {
@@ -52,17 +52,22 @@ export const importPerson = async (person: Person) => {
 export const importPersonEl = async (personEl: string): Promise<string[]> => {
   let personsList = await oparl.getData<ExternalList<Person>>(personEl);
   let hasNext = true;
-  let personIds: string[] = [];
+  let pagePromises: Promise<string[]>[] = [];
   do {
-    const persons = await map(personsList.data, async (person) => {
+    const persons = map(personsList.data, async (person) => {
       return importPerson(person);
     });
-    personIds = [...personIds, ...persons];
+    pagePromises.push(persons);
     if (personsList?.next) {
       personsList = await personsList.next();
     } else {
       hasNext = false;
     }
   } while (hasNext);
-  return personIds;
+  const pageResults = await Promise.all(pagePromises).then((pageResults) => {
+    return pageResults.reduce<string[]>((prev, arr) => {
+      return [...prev, ...arr];
+    }, []);
+  });
+  return pageResults;
 };

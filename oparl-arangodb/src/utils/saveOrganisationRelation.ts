@@ -13,6 +13,7 @@ export const saveOrganisationRelation = async ({
   fromId: string;
   toKey: string;
 }) => {
+  process.stdout.write("#O");
   return organisationsCollection
     .save(
       {

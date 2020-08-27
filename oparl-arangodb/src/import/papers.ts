@@ -10,9 +10,13 @@ import { importLocation } from "./location";
 import { saveFileRelation } from "../utils/saveFileRelation";
 import { importKeyword } from "./keyword";
 import { savePersonRelation } from "../utils/savePersonRelation";
+import { alreadyImported } from "../utils/alreadyImported";
 
 export const importPaper = async (paper: Paper) => {
-  process.stdout.write("Pap");
+  process.stdout.write("Pa");
+  if (alreadyImported(paper.id)) {
+    return paper.id;
+  }
   let papersCollection = db.collection(PAPER_COLLECTION);
 
   const paperKey = oparlIdToArangoKey(paper.id);
@@ -32,63 +36,65 @@ export const importPaper = async (paper: Paper) => {
     ...paperRest
   } = paper;
 
-  const auxiliaryFiles = auxiliaryFile
-    ? await map(auxiliaryFile, importFile).catch((e) =>
-        console.log("\nERROR Paper->auxiliaryFile ", e)
-      )
+  auxiliaryFile
+    ? map(auxiliaryFile, importFile)
+        .then(async (auxiliaryFiles) => {
+          if (auxiliaryFiles) {
+            map(auxiliaryFiles, (rel) => {
+              return saveFileRelation({
+                fromId: `${PAPER_COLLECTION}/${paperKey}`,
+                toKey: oparlIdToArangoKey(rel),
+                type: "auxiliaryFile",
+              });
+            });
+          }
+          return auxiliaryFiles;
+        })
+        .catch((e) => console.log("\nERROR Paper->auxiliaryFile ", e))
     : [];
 
-  const consultations = consultation
-    ? await map(consultation, importConsultation).catch((e) =>
+  consultation
+    ? map(consultation, importConsultation).catch((e) =>
         console.log("\nERROR Paper->consultations ", e, consultation)
       )
     : [];
 
-  const mainFile = mainFileFile
-    ? await importFile(mainFileFile).catch((e) =>
-        console.log("\nERROR Paper->mainFile ", e)
-      )
+  mainFileFile
+    ? importFile(mainFileFile)
+        .then(async (mainFile) => {
+          if (mainFile) {
+            saveFileRelation({
+              fromId: `${PAPER_COLLECTION}/${paperKey}`,
+              toKey: oparlIdToArangoKey(mainFile),
+              type: "mainFile",
+            });
+          }
+          return mainFile;
+        })
+        .catch((e) => console.log("\nERROR Paper->mainFile ", e))
     : undefined;
-  const locations = location
-    ? await map(location, importLocation).catch((e) =>
+  location
+    ? map(location, importLocation).catch((e) =>
         console.log("\nERROR Paper->locations ", e)
       )
     : [];
 
   // file edges
-  if (mainFile) {
-    await saveFileRelation({
-      fromId: `${PAPER_COLLECTION}/${paperKey}`,
-      toKey: oparlIdToArangoKey(mainFile),
-      type: "mainFile",
-    });
-  }
-  if (auxiliaryFiles) {
-    await map(auxiliaryFiles, (rel) => {
-      return saveFileRelation({
-        fromId: `${PAPER_COLLECTION}/${paperKey}`,
-        toKey: oparlIdToArangoKey(rel),
-        type: "auxiliaryFile",
-      });
-    });
-  }
 
   // person edges
   if (originatorPersons) {
-    await map(
-      originatorPersons,
-      async (originatorPerson) =>
-        await savePersonRelation({
-          fromId: `${PAPER_COLLECTION}/${paperKey}`,
-          toKey: oparlIdToArangoKey(originatorPerson),
-          type: "originatorPerson",
-        })
+    map(originatorPersons, async (originatorPerson) =>
+      savePersonRelation({
+        fromId: `${PAPER_COLLECTION}/${paperKey}`,
+        toKey: oparlIdToArangoKey(originatorPerson),
+        type: "originatorPerson",
+      })
     );
   }
 
   // Keyword edge
   if (keyword) {
-    await map(keyword, (k) =>
+    map(keyword, (k) =>
       importKeyword({ keyword: k, fromId: `${PAPER_COLLECTION}/${paperKey}` })
     );
   }
@@ -97,14 +103,6 @@ export const importPaper = async (paper: Paper) => {
     .save(
       {
         ...paperRest,
-        consultations,
-        relatedPapers,
-        superordinatedPapers,
-        subordinatedPapers,
-        locations,
-        originatorPersons,
-        underDirectionsOf,
-        originatorOrganizations,
         _key: paperKey,
       },
       {
@@ -117,17 +115,22 @@ export const importPaper = async (paper: Paper) => {
 export const importPaperEl = async (paperEl: string): Promise<string[]> => {
   let papersList = await oparl.getData<ExternalList<Paper>>(paperEl);
   let hasNext = true;
-  let paperIds: string[] = [];
+  let pagePromises: Promise<string[]>[] = [];
   do {
-    const papers = await map(papersList.data, async (paper) => {
+    const papers = map(papersList.data, async (paper) => {
       return importPaper(paper);
     });
-    paperIds = [...paperIds, ...papers];
+    pagePromises.push(papers);
     if (papersList?.next) {
       papersList = await papersList.next();
     } else {
       hasNext = false;
     }
   } while (hasNext);
-  return paperIds;
+  const pageResults = await Promise.all(pagePromises).then((pageResults) => {
+    return pageResults.reduce<string[]>((prev, arr) => {
+      return [...prev, ...arr];
+    }, []);
+  });
+  return pageResults;
 };

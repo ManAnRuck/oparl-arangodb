@@ -13,6 +13,7 @@ export const saveConsultationRelation = async ({
   fromId: string;
   toKey: string;
 }) => {
+  process.stdout.write("#C");
   return consultationsCollection.save(
     {
       _key: Buffer.from(

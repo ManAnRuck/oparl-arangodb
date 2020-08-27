@@ -10,9 +10,13 @@ import { map } from "p-iteration";
 import { importKeyword } from "./keyword";
 import { saveMembershipRelation } from "../utils/saveMembershipRelation";
 import { savePersonRelation } from "../utils/savePersonRelation";
+import { alreadyImported } from "../utils/alreadyImported";
 
 export const importMembership = async (membership: Membership) => {
   process.stdout.write("Mem");
+  if (alreadyImported(membership.id)) {
+    return membership.id;
+  }
   let membershipsCollection = db.collection(MEMBERSHIP_COLLECTION);
 
   const membershipKey = oparlIdToArangoKey(membership.id);
@@ -27,13 +31,13 @@ export const importMembership = async (membership: Membership) => {
 
   // membership edges
   if (organization) {
-    await saveMembershipRelation({
+    saveMembershipRelation({
       fromId: `${ORGANISATION_COLLECTION}/${oparlIdToArangoKey(organization)}`,
       toKey: membershipKey,
     });
   }
   if (onBehalfOf) {
-    await saveMembershipRelation({
+    saveMembershipRelation({
       fromId: `${ORGANISATION_COLLECTION}/${oparlIdToArangoKey(onBehalfOf)}`,
       toKey: membershipKey,
       type: "onBehalfOf",
@@ -42,7 +46,7 @@ export const importMembership = async (membership: Membership) => {
 
   // person edges
   if (person) {
-    await savePersonRelation({
+    savePersonRelation({
       fromId: `${MEMBERSHIP_COLLECTION}/${membershipKey}`,
       toKey: oparlIdToArangoKey(person),
     });
@@ -50,7 +54,7 @@ export const importMembership = async (membership: Membership) => {
 
   // Keyword edge
   if (keyword) {
-    await map(keyword, (k) =>
+    map(keyword, (k) =>
       importKeyword({
         keyword: k,
         fromId: `${MEMBERSHIP_COLLECTION}/${membershipKey}`,
@@ -78,17 +82,22 @@ export const importMembershipEl = async (
     MembershipEl
   );
   let hasNext = true;
-  let MembershipIds: string[] = [];
+  let pagePromises: Promise<string[]>[] = [];
   do {
-    const Memberships = await map(MembershipsList.data, async (Membership) => {
+    const memberships = map(MembershipsList.data, async (Membership) => {
       return importMembership(Membership);
     });
-    MembershipIds = [...MembershipIds, ...Memberships];
+    pagePromises.push(memberships);
     if (MembershipsList?.next) {
       MembershipsList = await MembershipsList.next();
     } else {
       hasNext = false;
     }
   } while (hasNext);
-  return MembershipIds;
+  const pageResults = await Promise.all(pagePromises).then((pageResults) => {
+    return pageResults.reduce<string[]>((prev, arr) => {
+      return [...prev, ...arr];
+    }, []);
+  });
+  return pageResults;
 };

@@ -8,12 +8,15 @@ import { oparl } from "./oparl";
 import { saveFileRelation } from "../utils/saveFileRelation";
 import { importKeyword } from "./keyword";
 import { saveConsultationRelation } from "../utils/saveConsultationRelation";
+import { alreadyImported } from "../utils/alreadyImported";
 
 export const importAgendaItem = async (agendaItem: AgendaItem) => {
   process.stdout.write("A");
   let agendaItemsCollection = db.collection(AGENDA_ITEM_COLLECTION);
-
   const agendaItemKey = oparlIdToArangoKey(agendaItem.id);
+  if (alreadyImported(agendaItem.id)) {
+    return agendaItem.id;
+  }
 
   const {
     auxiliaryFile,
@@ -24,34 +27,36 @@ export const importAgendaItem = async (agendaItem: AgendaItem) => {
     ...agendaItemRest
   } = agendaItem;
 
-  const auxiliaryFiles = auxiliaryFile
-    ? await map(auxiliaryFile, importFile)
+  auxiliaryFile
+    ? map(auxiliaryFile, importFile).then(async (auxiliaryFiles) => {
+        if (auxiliaryFiles) {
+          map(auxiliaryFiles, (rel) => {
+            return saveFileRelation({
+              fromId: `${AGENDA_ITEM_COLLECTION}/${agendaItemKey}`,
+              toKey: oparlIdToArangoKey(rel),
+              type: "auxiliaryFile",
+            });
+          });
+        }
+        return auxiliaryFiles;
+      })
     : [];
-  const resolutionFile = resolutionFileObj
-    ? await importFile(resolutionFileObj)
+  resolutionFileObj
+    ? importFile(resolutionFileObj).then(async (resolutionFile) => {
+        if (resolutionFile) {
+          saveFileRelation({
+            fromId: `${AGENDA_ITEM_COLLECTION}/${agendaItemKey}`,
+            toKey: oparlIdToArangoKey(resolutionFile),
+            type: "resolutionFile",
+          });
+        }
+        return resolutionFile;
+      })
     : undefined;
-
-  // file edges
-  if (resolutionFile) {
-    await saveFileRelation({
-      fromId: `${AGENDA_ITEM_COLLECTION}/${agendaItemKey}`,
-      toKey: oparlIdToArangoKey(resolutionFile),
-      type: "resolutionFile",
-    });
-  }
-  if (auxiliaryFiles) {
-    await map(auxiliaryFiles, (rel) => {
-      return saveFileRelation({
-        fromId: `${AGENDA_ITEM_COLLECTION}/${agendaItemKey}`,
-        toKey: oparlIdToArangoKey(rel),
-        type: "auxiliaryFile",
-      });
-    });
-  }
 
   // Keyword edge
   if (keyword) {
-    await map(keyword, (k) =>
+    map(keyword, (k) =>
       importKeyword({
         keyword: k,
         fromId: `${AGENDA_ITEM_COLLECTION}/${agendaItemKey}`,
@@ -61,7 +66,7 @@ export const importAgendaItem = async (agendaItem: AgendaItem) => {
 
   // Consultation edge
   if (consultation) {
-    await saveConsultationRelation({
+    saveConsultationRelation({
       fromId: `${AGENDA_ITEM_COLLECTION}/${agendaItemKey}`,
       toKey: oparlIdToArangoKey(consultation),
     });
@@ -88,17 +93,22 @@ export const importAgendaItemEl = async (
     agendaItemEl
   );
   let hasNext = true;
-  let agendaItemIds: string[] = [];
+  let pagePromises: Promise<string[]>[] = [];
   do {
-    const agendaItems = await map(agendaItemsList.data, async (agendaItem) => {
+    const agendaItems = map(agendaItemsList.data, async (agendaItem) => {
       return importAgendaItem(agendaItem);
     });
-    agendaItemIds = [...agendaItemIds, ...agendaItems];
+    pagePromises.push(agendaItems);
     if (agendaItemsList?.next) {
       agendaItemsList = await agendaItemsList.next();
     } else {
       hasNext = false;
     }
   } while (hasNext);
-  return agendaItemIds;
+  const pageResults = await Promise.all(pagePromises).then((pageResults) => {
+    return pageResults.reduce<string[]>((prev, arr) => {
+      return [...prev, ...arr];
+    }, []);
+  });
+  return pageResults;
 };

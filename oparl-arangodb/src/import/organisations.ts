@@ -10,9 +10,13 @@ import { importLocation } from "./location";
 import { importKeyword } from "./keyword";
 import { saveMeetingRelation } from "../utils/saveMeetingRelation";
 import { saveOrganisationRelation } from "../utils/saveOrganisationRelation";
+import { alreadyImported } from "../utils/alreadyImported";
 
 export const importOrganization = async (organization: Organization) => {
   process.stdout.write("O");
+  if (alreadyImported(organization.id)) {
+    return organization.id;
+  }
   let organizationsCollection = db.collection(ORGANISATION_COLLECTION);
 
   const organizationKey = oparlIdToArangoKey(organization.id);
@@ -26,28 +30,29 @@ export const importOrganization = async (organization: Organization) => {
     ...organizationRest
   } = organization;
 
-  const meetings = meeting ? await importMeetingEl(meeting) : [];
-  const memberships = membership;
-  const consultations = consultation
-    ? await importConsultationEl(consultation)
+  meeting
+    ? importMeetingEl(meeting).then(async (meetings) => {
+        // Meetings edge
+        if (meetings) {
+          map(meetings, (id) =>
+            saveMeetingRelation({
+              toKey: oparlIdToArangoKey(id),
+              fromId: `${ORGANISATION_COLLECTION}/${organizationKey}`,
+            })
+          );
+        }
+        return meetings;
+      })
     : [];
-  const location = locationObj ? await importLocation(locationObj) : undefined;
+
+  consultation ? importConsultationEl(consultation) : [];
+  locationObj ? importLocation(locationObj) : undefined;
 
   // Keyword edge
   if (keyword) {
-    await map(keyword, (k) =>
+    map(keyword, (k) =>
       importKeyword({
         keyword: k,
-        fromId: `${ORGANISATION_COLLECTION}/${organizationKey}`,
-      })
-    );
-  }
-
-  // Meetings edge
-  if (meetings) {
-    await map(meetings, (id) =>
-      saveMeetingRelation({
-        toKey: oparlIdToArangoKey(id),
         fromId: `${ORGANISATION_COLLECTION}/${organizationKey}`,
       })
     );
@@ -57,10 +62,6 @@ export const importOrganization = async (organization: Organization) => {
     .save(
       {
         ...organizationRest,
-        meetings,
-        memberships,
-        consultations,
-        location,
         _key: organizationKey,
       },
       {
@@ -70,7 +71,7 @@ export const importOrganization = async (organization: Organization) => {
     .then(() => organization.id);
 
   if (body) {
-    await saveOrganisationRelation({
+    saveOrganisationRelation({
       fromId: `${BODY_COLLECTION}/${oparlIdToArangoKey(body)}`,
       toKey: `${organizationKey}`,
     });
@@ -86,20 +87,24 @@ export const importOrganizationEl = async (
     organizationEl
   );
   let hasNext = true;
-  let organizationIds: string[] = [];
+  let pagePromises: Promise<string[]>[] = [];
   do {
-    const organizations = await map(
-      organizationsList.data,
-      async (organization) => {
-        return importOrganization(organization);
-      }
-    );
-    organizationIds = [...organizationIds, ...organizations];
+    const organizations = map(organizationsList.data, async (organization) => {
+      return importOrganization(organization);
+    });
+    pagePromises.push(organizations);
     if (organizationsList?.next) {
       organizationsList = await organizationsList.next();
     } else {
       hasNext = false;
     }
   } while (hasNext);
-  return organizationIds;
+  console.log("\n\n Start await all organization pages");
+  const pageResults = await Promise.all(pagePromises).then((pageResults) => {
+    return pageResults.reduce<string[]>((prev, arr) => {
+      return [...prev, ...arr];
+    }, []);
+  });
+  console.log("\n\n Finish await all organization pages");
+  return pageResults;
 };

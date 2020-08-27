@@ -10,6 +10,7 @@ export const saveKeywordRelation = async ({
   fromId: string;
   toKey: string;
 }) => {
+  process.stdout.write("#K");
   return keywordCollection.save(
     {
       _key: Buffer.from(`${fromId}-${KEYWORD_COLLECTION}/${toKey}`).toString(

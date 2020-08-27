@@ -6,9 +6,13 @@ import { oparl } from "./oparl";
 import { map } from "p-iteration";
 import { saveFileRelation } from "../utils/saveFileRelation";
 import { importKeyword } from "./keyword";
+import { alreadyImported } from "../utils/alreadyImported";
 
 export const importFile = async (file: File) => {
   process.stdout.write("F");
+  if (alreadyImported(file.id)) {
+    return file.id;
+  }
   let filesCollection = db.collection(FILE_COLLECTION);
 
   const fileKey = oparlIdToArangoKey(file.id);
@@ -26,14 +30,14 @@ export const importFile = async (file: File) => {
 
   // file edges
   if (masterFile) {
-    await saveFileRelation({
+    saveFileRelation({
       fromId: `${FILE_COLLECTION}/${fileKey}`,
       toKey: oparlIdToArangoKey(masterFile),
       type: "masterFile",
     });
   }
   if (derivativeFile) {
-    await map(derivativeFile, (rel) => {
+    map(derivativeFile, (rel) => {
       return saveFileRelation({
         fromId: `${FILE_COLLECTION}/${fileKey}`,
         toKey: oparlIdToArangoKey(rel),
@@ -44,7 +48,7 @@ export const importFile = async (file: File) => {
 
   // Keyword edge
   if (keyword) {
-    await map(keyword, (k) =>
+    map(keyword, (k) =>
       importKeyword({ keyword: k, fromId: `${FILE_COLLECTION}/${fileKey}` })
     );
   }
@@ -53,9 +57,6 @@ export const importFile = async (file: File) => {
     .save(
       {
         ...fileRest,
-        meetings,
-        agendaItems,
-        papers,
         _key: fileKey,
       },
       {
@@ -68,17 +69,22 @@ export const importFile = async (file: File) => {
 export const importFileEl = async (fileEl: string): Promise<string[]> => {
   let filesList = await oparl.getData<ExternalList<File>>(fileEl);
   let hasNext = true;
-  let fileIds: string[] = [];
+  let pagePromises: Promise<string[]>[] = [];
   do {
-    const files = await map(filesList.data, async (file) => {
+    const files = map(filesList.data, async (file) => {
       return importFile(file);
     });
-    fileIds = [...fileIds, ...files];
+    pagePromises.push(files);
     if (filesList?.next) {
       filesList = await filesList.next();
     } else {
       hasNext = false;
     }
   } while (hasNext);
-  return fileIds;
+  const pageResults = await Promise.all(pagePromises).then((pageResults) => {
+    return pageResults.reduce<string[]>((prev, arr) => {
+      return [...prev, ...arr];
+    }, []);
+  });
+  return pageResults;
 };

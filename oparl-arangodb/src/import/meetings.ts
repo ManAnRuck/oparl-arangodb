@@ -11,9 +11,13 @@ import { saveFileRelation } from "../utils/saveFileRelation";
 import { importKeyword } from "./keyword";
 import { saveAgendaItemRelation } from "../utils/saveAgendaItemRelation";
 import { savePersonRelation } from "../utils/savePersonRelation";
+import { alreadyImported } from "../utils/alreadyImported";
 
 export const importMeeting = async (meeting: Meeting) => {
   process.stdout.write("Mee");
+  if (alreadyImported(meeting.id)) {
+    return meeting.id;
+  }
 
   let meetingsCollection = db.collection(MEETING_COLLECTION);
 
@@ -37,56 +41,76 @@ export const importMeeting = async (meeting: Meeting) => {
     ...meetingRest
   } = meeting;
 
-  const agendaItems = agendaItem ? await map(agendaItem, importAgendaItem) : [];
-  const auxiliaryFiles = auxiliaryFile
-    ? await map(auxiliaryFile, importFile)
+  agendaItem
+    ? map(agendaItem, importAgendaItem).then(async (agendaItems) => {
+        // AgendaItem edge
+        if (agendaItems) {
+          map(agendaItems, (id) =>
+            saveAgendaItemRelation({
+              toKey: oparlIdToArangoKey(id),
+              fromId: `${MEETING_COLLECTION}/${meetingKey}`,
+            })
+          );
+        }
+        return agendaItems;
+      })
     : [];
-  const verbatimProtocol = verbatimProtocolFile
-    ? await importFile(verbatimProtocolFile)
+  auxiliaryFile
+    ? map(auxiliaryFile, importFile).then(async (auxiliaryFiles) => {
+        if (auxiliaryFiles) {
+          map(auxiliaryFiles, (rel) => {
+            return saveFileRelation({
+              fromId: `${MEETING_COLLECTION}/${meetingKey}`,
+              toKey: oparlIdToArangoKey(rel),
+              type: "auxiliaryFile",
+            });
+          });
+        }
+        return auxiliaryFiles;
+      })
+    : [];
+  verbatimProtocolFile
+    ? importFile(verbatimProtocolFile).then(async (verbatimProtocol) => {
+        if (verbatimProtocol) {
+          saveFileRelation({
+            fromId: `${MEETING_COLLECTION}/${meetingKey}`,
+            toKey: oparlIdToArangoKey(verbatimProtocol),
+            type: "verbatimProtocol",
+          });
+        }
+        return verbatimProtocol;
+      })
     : undefined;
-  const location = locationObj ? await importLocation(locationObj) : undefined;
-  const invitation = invitationObj
-    ? await importFile(invitationObj)
+  locationObj ? importLocation(locationObj) : undefined;
+  invitationObj
+    ? importFile(invitationObj).then(async (invitation) => {
+        // file edges
+        if (invitation) {
+          saveFileRelation({
+            fromId: `${MEETING_COLLECTION}/${meetingKey}`,
+            toKey: oparlIdToArangoKey(invitation),
+            type: "invitation",
+          });
+        }
+        return invitation;
+      })
     : undefined;
-  const resultsProtocol = resultsProtocolObj
-    ? await importFile(resultsProtocolObj)
+  resultsProtocolObj
+    ? importFile(resultsProtocolObj).then(async (resultsProtocol) => {
+        if (resultsProtocol) {
+          saveFileRelation({
+            fromId: `${MEETING_COLLECTION}/${meetingKey}`,
+            toKey: oparlIdToArangoKey(resultsProtocol),
+            type: "resultsProtocol",
+          });
+        }
+        return resultsProtocol;
+      })
     : undefined;
-
-  // file edges
-  if (invitation) {
-    await saveFileRelation({
-      fromId: `${MEETING_COLLECTION}/${meetingKey}`,
-      toKey: oparlIdToArangoKey(invitation),
-      type: "invitation",
-    });
-  }
-  if (resultsProtocol) {
-    await saveFileRelation({
-      fromId: `${MEETING_COLLECTION}/${meetingKey}`,
-      toKey: oparlIdToArangoKey(resultsProtocol),
-      type: "resultsProtocol",
-    });
-  }
-  if (verbatimProtocol) {
-    await saveFileRelation({
-      fromId: `${MEETING_COLLECTION}/${meetingKey}`,
-      toKey: oparlIdToArangoKey(verbatimProtocol),
-      type: "verbatimProtocol",
-    });
-  }
-  if (auxiliaryFiles) {
-    await map(auxiliaryFiles, (rel) => {
-      return saveFileRelation({
-        fromId: `${MEETING_COLLECTION}/${meetingKey}`,
-        toKey: oparlIdToArangoKey(rel),
-        type: "auxiliaryFile",
-      });
-    });
-  }
 
   // Keyword edge
   if (keyword) {
-    await map(keyword, (k) =>
+    map(keyword, (k) =>
       importKeyword({
         keyword: k,
         fromId: `${MEETING_COLLECTION}/${meetingKey}`,
@@ -94,26 +118,14 @@ export const importMeeting = async (meeting: Meeting) => {
     );
   }
 
-  // AgendaItem edge
-  if (agendaItems) {
-    await map(agendaItems, (id) =>
-      saveAgendaItemRelation({
-        toKey: oparlIdToArangoKey(id),
-        fromId: `${MEETING_COLLECTION}/${meetingKey}`,
-      })
-    );
-  }
-
   // person edges
   if (participants) {
-    await map(
-      participants,
-      async (p) =>
-        await savePersonRelation({
-          fromId: `${MEETING_COLLECTION}/${meetingKey}`,
-          toKey: oparlIdToArangoKey(p),
-          type: "participant",
-        })
+    map(participants, (p) =>
+      savePersonRelation({
+        fromId: `${MEETING_COLLECTION}/${meetingKey}`,
+        toKey: oparlIdToArangoKey(p),
+        type: "participant",
+      })
     );
   }
 
@@ -121,7 +133,6 @@ export const importMeeting = async (meeting: Meeting) => {
     .save(
       {
         ...meetingRest,
-        location,
         start: start ? new Date(start) : undefined,
         end: end ? new Date(end) : undefined,
         created: created ? new Date(created) : undefined,
@@ -138,17 +149,22 @@ export const importMeeting = async (meeting: Meeting) => {
 export const importMeetingEl = async (meetingEl: string): Promise<string[]> => {
   let meetingsList = await oparl.getData<ExternalList<Meeting>>(meetingEl);
   let hasNext = true;
-  let meetingIds: string[] = [];
+  let pagePromises: Promise<string[]>[] = [];
   do {
-    const meetings = await map(meetingsList.data, async (meeting) => {
+    const meetings = map(meetingsList.data, async (meeting) => {
       return importMeeting(meeting);
     });
-    meetingIds = [...meetingIds, ...meetings];
+    pagePromises.push(meetings);
     if (meetingsList?.next) {
       meetingsList = await meetingsList.next();
     } else {
       hasNext = false;
     }
   } while (hasNext);
-  return meetingIds;
+  const pageResults = await Promise.all(pagePromises).then((pageResults) => {
+    return pageResults.reduce<string[]>((prev, arr) => {
+      return [...prev, ...arr];
+    }, []);
+  });
+  return pageResults;
 };

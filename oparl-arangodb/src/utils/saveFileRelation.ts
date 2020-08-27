@@ -12,6 +12,7 @@ export const saveFileRelation = async ({
   toKey: string;
   type: string;
 }) => {
+  process.stdout.write("#F");
   return fileCollection.save(
     {
       _key: Buffer.from(`${fromId}-${FILE_COLLECTION}/${toKey}`).toString(

@@ -12,6 +12,7 @@ export const savePersonRelation = async ({
   toKey: string;
   type?: string;
 }) => {
+  process.stdout.write("#Pe");
   return personsCollection
     .save(
       {

@@ -5,9 +5,13 @@ import { oparlIdToArangoKey } from "../utils/oparlIdToArangoKey";
 import { oparl } from "./oparl";
 import { map } from "p-iteration";
 import { importKeyword } from "./keyword";
+import { alreadyImported } from "../utils/alreadyImported";
 
 export const importLocation = async (location: Location) => {
   process.stdout.write("Loc");
+  if (alreadyImported(location.id)) {
+    return location.id;
+  }
   let locationsCollection = db.collection(LOCATION_COLLECTION);
 
   const locationKey = oparlIdToArangoKey(location.id);
@@ -16,7 +20,7 @@ export const importLocation = async (location: Location) => {
 
   // Keyword edge
   if (keyword) {
-    await map(keyword, (k) =>
+    map(keyword, (k) =>
       importKeyword({
         keyword: k,
         fromId: `${LOCATION_COLLECTION}/${locationKey}`,

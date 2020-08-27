@@ -5,11 +5,15 @@ import { oparlIdToArangoKey } from "../utils/oparlIdToArangoKey";
 import { oparl } from "./oparl";
 import { map } from "p-iteration";
 import { importKeyword } from "./keyword";
+import { alreadyImported } from "../utils/alreadyImported";
 
 export const importLegislativeTerm = async (
   legislativeTerm: LegislativeTerm
 ) => {
   process.stdout.write("Leg");
+  if (alreadyImported(legislativeTerm.id)) {
+    return legislativeTerm.id;
+  }
   let legislativeTermsCollection = db.collection(LEGISLATIVE_TERM_COLLECTION);
 
   const legislativeTermKey = oparlIdToArangoKey(legislativeTerm.id);
@@ -18,7 +22,7 @@ export const importLegislativeTerm = async (
 
   // Keyword edge
   if (keyword) {
-    await map(keyword, (k) =>
+    map(keyword, (k) =>
       importKeyword({
         keyword: k,
         fromId: `${LEGISLATIVE_TERM_COLLECTION}/${legislativeTermKey}`,

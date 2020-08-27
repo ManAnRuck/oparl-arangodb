@@ -10,6 +10,7 @@ export const saveMeetingRelation = async ({
   fromId: string;
   toKey: string;
 }) => {
+  process.stdout.write("#Mee");
   return meetingsCollection.save(
     {
       _key: Buffer.from(`${fromId}-${MEETING_COLLECTION}/${toKey}`).toString(

@@ -13,6 +13,7 @@ export const saveAgendaItemRelation = async ({
   fromId: string;
   toKey: string;
 }) => {
+  process.stdout.write("#A");
   return agendaItemCollection.save(
     {
       _key: Buffer.from(

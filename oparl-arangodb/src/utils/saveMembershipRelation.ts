@@ -15,6 +15,7 @@ export const saveMembershipRelation = async ({
   toKey: string;
   type?: string;
 }) => {
+  process.stdout.write("#Mem");
   return membershipCollection.save(
     {
       _key: Buffer.from(`${fromId}-${MEMBERSHIP_COLLECTION}/${toKey}`).toString(

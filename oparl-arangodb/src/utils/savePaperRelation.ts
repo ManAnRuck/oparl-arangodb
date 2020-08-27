@@ -10,6 +10,7 @@ export const savePaperRelation = async ({
   fromId: string;
   toKey: string;
 }) => {
+  process.stdout.write("#Pa");
   return papersCollection
     .save(
       {
